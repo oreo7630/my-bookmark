@@ -117,7 +117,163 @@ function addCustomSite({ categoryId, name, desc, url }) {
 function deleteCustomSite(id) {
   customSites = customSites.filter((site) => site.id !== id);
   saveCustomSites();
-  renderGrid();
+
+  if (favoriteKeys.delete(id)) saveFavorites();
+
+  const hadVisit = recentVisits.some((v) => v.key === id);
+  if (hadVisit) {
+    recentVisits = recentVisits.filter((v) => v.key !== id);
+    saveRecentVisits();
+  }
+
+  renderAll();
+}
+
+// ---------------------------------------------------------------------------
+// 즐겨찾기 (localStorage)
+// ---------------------------------------------------------------------------
+
+const FAVORITES_KEY = "bookmarkDashboard.favorites";
+
+function loadFavorites() {
+  try {
+    const raw = localStorage.getItem(FAVORITES_KEY);
+    return raw ? new Set(JSON.parse(raw)) : new Set();
+  } catch (e) {
+    return new Set();
+  }
+}
+
+function saveFavorites() {
+  localStorage.setItem(FAVORITES_KEY, JSON.stringify([...favoriteKeys]));
+}
+
+function toggleFavorite(key) {
+  if (favoriteKeys.has(key)) {
+    favoriteKeys.delete(key);
+  } else {
+    favoriteKeys.add(key);
+  }
+  saveFavorites();
+  renderAll();
+}
+
+// ---------------------------------------------------------------------------
+// 최근 방문 기록 (localStorage)
+// ---------------------------------------------------------------------------
+
+const RECENT_VISITS_KEY = "bookmarkDashboard.recentVisits";
+const RECENT_VISITS_LIMIT = 5;
+
+function loadRecentVisits() {
+  try {
+    const raw = localStorage.getItem(RECENT_VISITS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function saveRecentVisits() {
+  localStorage.setItem(RECENT_VISITS_KEY, JSON.stringify(recentVisits));
+}
+
+function recordVisit(site) {
+  recentVisits = recentVisits.filter((v) => v.key !== site.key);
+  recentVisits.unshift({
+    key: site.key,
+    id: site.id,
+    name: site.name,
+    desc: site.desc,
+    url: site.url,
+    categoryId: site.categoryId,
+    categoryTitle: site.categoryTitle,
+    isCustom: site.isCustom,
+    visitedAt: Date.now(),
+  });
+  recentVisits = recentVisits.slice(0, RECENT_VISITS_LIMIT);
+  saveRecentVisits();
+  renderRecentSection();
+}
+
+function formatRelativeTime(timestamp) {
+  const diffMs = Date.now() - timestamp;
+  const min = Math.floor(diffMs / 60000);
+  if (min < 1) return "방금 전";
+  if (min < 60) return `${min}분 전`;
+  const hour = Math.floor(min / 60);
+  if (hour < 24) return `${hour}시간 전`;
+  const day = Math.floor(hour / 24);
+  if (day < 7) return `${day}일 전`;
+  const d = new Date(timestamp);
+  return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")}`;
+}
+
+// ---------------------------------------------------------------------------
+// 백업 / 복원
+// ---------------------------------------------------------------------------
+
+function exportBackup() {
+  const data = {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    customSites,
+    favorites: [...favoriteKeys],
+    recentVisits,
+  };
+
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const dateStr = new Date().toISOString().slice(0, 10);
+
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `bookmark-backup-${dateStr}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function importBackupFile(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    let data;
+    try {
+      data = JSON.parse(reader.result);
+    } catch (e) {
+      alert("올바른 백업 파일이 아닙니다.");
+      return;
+    }
+
+    const hasExisting =
+      customSites.length > 0 || favoriteKeys.size > 0 || recentVisits.length > 0;
+    if (hasExisting && !confirm("기존 데이터를 덮어씁니다. 계속하시겠습니까?")) {
+      return;
+    }
+
+    localStorage.setItem(CUSTOM_SITES_KEY, JSON.stringify(data.customSites || []));
+    localStorage.setItem(FAVORITES_KEY, JSON.stringify(data.favorites || []));
+    localStorage.setItem(RECENT_VISITS_KEY, JSON.stringify(data.recentVisits || []));
+    location.reload();
+  };
+  reader.readAsText(file);
+}
+
+function initBackupRestore() {
+  const backupBtn = document.getElementById("backup-btn");
+  const restoreBtn = document.getElementById("restore-btn");
+  const fileInput = document.getElementById("restore-file-input");
+
+  backupBtn.addEventListener("click", exportBackup);
+
+  restoreBtn.addEventListener("click", () => fileInput.click());
+
+  fileInput.addEventListener("change", () => {
+    const file = fileInput.files[0];
+    if (file) importBackupFile(file);
+    fileInput.value = "";
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -127,33 +283,34 @@ function deleteCustomSite(id) {
 let selectedCategoryId = "all";
 let searchTerm = "";
 let customSites = loadCustomSites();
+let favoriteKeys = loadFavorites();
+let recentVisits = loadRecentVisits();
 
 // ---------------------------------------------------------------------------
-// 렌더링: 탭
+// 렌더링: 카테고리 내비게이션
 // ---------------------------------------------------------------------------
 
-function renderTabs() {
-  const tabs = document.getElementById("tabs");
-  tabs.innerHTML = "";
+function renderCategoryNav() {
+  const nav = document.getElementById("category-nav");
+  nav.innerHTML = "";
 
-  const allBtn = createTabButton("all", "전체", "🗂️");
-  tabs.appendChild(allBtn);
+  nav.appendChild(createNavItem("all", "전체", getAllSites().length));
 
   CATEGORIES.forEach((cat) => {
-    tabs.appendChild(createTabButton(cat.id, cat.title, cat.icon));
+    nav.appendChild(createNavItem(cat.id, cat.title, getSitesForCategory(cat).length));
   });
 }
 
-function createTabButton(id, title, icon) {
+function createNavItem(id, title, count) {
   const btn = document.createElement("button");
   btn.type = "button";
-  btn.className = "tab-btn" + (id === selectedCategoryId ? " active" : "");
+  btn.className = "nav-item" + (id === selectedCategoryId ? " active" : "");
   btn.setAttribute("role", "tab");
   btn.setAttribute("aria-selected", id === selectedCategoryId ? "true" : "false");
-  btn.innerHTML = `<span>${icon}</span><span>${title}</span>`;
+  btn.innerHTML = `<span class="nav-item-label">${title}</span><span class="nav-item-count">${count}</span>`;
   btn.addEventListener("click", () => {
     selectedCategoryId = id;
-    renderTabs();
+    renderCategoryNav();
     renderGrid();
   });
   return btn;
@@ -167,9 +324,15 @@ function getSitesForCategory(cat) {
   const custom = customSites.filter((site) => site.categoryId === cat.id);
   return [...cat.sites, ...custom].map((site) => ({
     ...site,
+    categoryId: cat.id,
     categoryTitle: cat.title,
     isCustom: Boolean(site.id),
+    key: site.id || `${cat.id}::${site.name}`,
   }));
+}
+
+function getAllSites() {
+  return CATEGORIES.flatMap(getSitesForCategory);
 }
 
 function getVisibleSites() {
@@ -198,7 +361,7 @@ function renderGrid() {
   const sites = getVisibleSites();
   const cat = CATEGORIES.find((c) => c.id === selectedCategoryId);
 
-  label.textContent = cat ? `${cat.icon} ${cat.title}` : "🗂️ 전체";
+  label.textContent = cat ? cat.title : "전체";
   countText.textContent = `${sites.length}개 사이트`;
 
   grid.innerHTML = "";
@@ -214,44 +377,137 @@ function renderGrid() {
   }
 
   sites.forEach((site) => {
-    const card = document.createElement("a");
-    card.className = "site-card";
-    card.href = site.url;
-    if (site.url !== "#") {
-      card.target = "_blank";
-      card.rel = "noopener noreferrer";
-    } else {
-      card.addEventListener("click", (e) => e.preventDefault());
-    }
+    grid.appendChild(
+      createSiteCard(site, { showCategory: selectedCategoryId === "all" })
+    );
+  });
+}
 
-    const badge = site.url === "#" ? '<span class="badge-pending">링크 준비중</span>' : "";
-    const deleteBtn = site.isCustom
-      ? '<button type="button" class="delete-btn" title="삭제" aria-label="사이트 삭제">×</button>'
-      : "";
+// ---------------------------------------------------------------------------
+// 렌더링: 사이트 카드 (그리드 / 즐겨찾기 / 최근 방문 공용)
+// ---------------------------------------------------------------------------
 
-    card.innerHTML = `
+function createSiteCard(site, { showCategory = true, visitedAt = null } = {}) {
+  const card = document.createElement("a");
+  card.className = "site-card";
+  card.href = site.url;
+  if (site.url !== "#") {
+    card.target = "_blank";
+    card.rel = "noopener noreferrer";
+    card.addEventListener("click", () => recordVisit(site));
+  } else {
+    card.addEventListener("click", (e) => e.preventDefault());
+  }
+
+  const isFav = favoriteKeys.has(site.key);
+  const favoriteBtn = `<button type="button" class="favorite-btn${
+    isFav ? " active" : ""
+  }" title="즐겨찾기" aria-label="즐겨찾기 토글">${isFav ? "⭐" : "☆"}</button>`;
+  const badge = site.url === "#" ? '<span class="badge-pending">링크 준비중</span>' : "";
+  const deleteBtn = site.isCustom
+    ? '<button type="button" class="delete-btn" title="삭제" aria-label="사이트 삭제">×</button>'
+    : "";
+  const visitedLabel = visitedAt
+    ? `<span class="visited-time">${formatRelativeTime(visitedAt)}</span>`
+    : "";
+
+  card.innerHTML = `
+    <div class="card-top-icons">
+      ${favoriteBtn}
       ${badge}
       ${deleteBtn}
-      <div class="site-card-top">
-        <span class="site-card-icon">${site.name.charAt(0)}</span>
-        ${selectedCategoryId === "all" ? `<span class="site-card-category">${site.categoryTitle}</span>` : ""}
-      </div>
-      <span class="site-card-name">${site.name}</span>
-      <span class="site-card-desc">${site.desc}</span>
-    `;
+    </div>
+    <div class="site-card-top">
+      <span class="site-card-icon">${site.name.charAt(0)}</span>
+      ${showCategory ? `<span class="site-card-category">${site.categoryTitle}</span>` : ""}
+    </div>
+    <span class="site-card-name">${site.name}</span>
+    <span class="site-card-desc">${site.desc}</span>
+    ${visitedLabel}
+  `;
 
-    if (site.isCustom) {
-      card.querySelector(".delete-btn").addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        if (confirm(`"${site.name}"을(를) 삭제할까요?`)) {
-          deleteCustomSite(site.id);
-        }
-      });
-    }
-
-    grid.appendChild(card);
+  card.querySelector(".favorite-btn").addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    toggleFavorite(site.key);
   });
+
+  if (site.isCustom) {
+    card.querySelector(".delete-btn").addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (confirm(`"${site.name}"을(를) 삭제할까요?`)) {
+        deleteCustomSite(site.id);
+      }
+    });
+  }
+
+  return card;
+}
+
+// ---------------------------------------------------------------------------
+// 렌더링: 즐겨찾기 섹션
+// ---------------------------------------------------------------------------
+
+function renderFavoritesSection() {
+  const section = document.getElementById("favorites-section");
+  const grid = document.getElementById("favorites-grid");
+  const countText = document.getElementById("favorites-count-text");
+
+  const favSites = getAllSites().filter((site) => favoriteKeys.has(site.key));
+
+  if (favSites.length === 0) {
+    section.hidden = true;
+    grid.innerHTML = "";
+    return;
+  }
+
+  section.hidden = false;
+  countText.textContent = `${favSites.length}개`;
+  grid.innerHTML = "";
+  favSites.forEach((site) => {
+    grid.appendChild(createSiteCard(site, { showCategory: true }));
+  });
+}
+
+// ---------------------------------------------------------------------------
+// 렌더링: 최근 방문 섹션
+// ---------------------------------------------------------------------------
+
+function renderRecentSection() {
+  const section = document.getElementById("recent-section");
+  const grid = document.getElementById("recent-grid");
+
+  if (recentVisits.length === 0) {
+    section.hidden = true;
+    grid.innerHTML = "";
+    return;
+  }
+
+  section.hidden = false;
+  grid.innerHTML = "";
+  recentVisits.forEach((visit) => {
+    const site = {
+      key: visit.key,
+      id: visit.id,
+      name: visit.name,
+      desc: visit.desc,
+      url: visit.url,
+      categoryId: visit.categoryId,
+      categoryTitle: visit.categoryTitle,
+      isCustom: visit.isCustom,
+    };
+    grid.appendChild(
+      createSiteCard(site, { showCategory: true, visitedAt: visit.visitedAt })
+    );
+  });
+}
+
+function renderAll() {
+  renderCategoryNav();
+  renderGrid();
+  renderFavoritesSection();
+  renderRecentSection();
 }
 
 // ---------------------------------------------------------------------------
@@ -273,7 +529,7 @@ function initSearch() {
 function populateCategorySelect() {
   const select = document.getElementById("site-category");
   select.innerHTML = CATEGORIES.map(
-    (cat) => `<option value="${cat.id}">${cat.icon} ${cat.title}</option>`
+    (cat) => `<option value="${cat.id}">${cat.title}</option>`
   ).join("");
 }
 
@@ -317,8 +573,7 @@ function initAddDialog() {
     });
 
     selectedCategoryId = categoryId;
-    renderTabs();
-    renderGrid();
+    renderAll();
     dialog.close();
   });
 }
@@ -350,9 +605,6 @@ function initTheme() {
 
 function initBackToTop() {
   const btn = document.getElementById("back-to-top");
-  window.addEventListener("scroll", () => {
-    btn.classList.toggle("visible", window.scrollY > 400);
-  });
   btn.addEventListener("click", () => {
     window.scrollTo({ top: 0, behavior: "smooth" });
   });
@@ -363,12 +615,12 @@ function initBackToTop() {
 // ---------------------------------------------------------------------------
 
 function init() {
-  renderTabs();
-  renderGrid();
+  renderAll();
   initSearch();
   initAddDialog();
   initTheme();
   initBackToTop();
+  initBackupRestore();
 }
 
 document.addEventListener("DOMContentLoaded", init);

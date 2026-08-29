@@ -78,10 +78,55 @@ const CATEGORIES = [
 ];
 
 // ---------------------------------------------------------------------------
+// 사용자 추가 사이트 (localStorage)
+// ---------------------------------------------------------------------------
+
+const CUSTOM_SITES_KEY = "bookmarkDashboard.customSites";
+
+function loadCustomSites() {
+  try {
+    const raw = localStorage.getItem(CUSTOM_SITES_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function saveCustomSites() {
+  localStorage.setItem(CUSTOM_SITES_KEY, JSON.stringify(customSites));
+}
+
+function normalizeUrl(url) {
+  const trimmed = url.trim();
+  if (!trimmed || trimmed === "#") return "#";
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  return `https://${trimmed}`;
+}
+
+function addCustomSite({ categoryId, name, desc, url }) {
+  customSites.push({
+    id: `custom-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    categoryId,
+    name: name.trim(),
+    desc: desc.trim(),
+    url: normalizeUrl(url),
+  });
+  saveCustomSites();
+}
+
+function deleteCustomSite(id) {
+  customSites = customSites.filter((site) => site.id !== id);
+  saveCustomSites();
+  renderGrid();
+}
+
+// ---------------------------------------------------------------------------
 // 상태
 // ---------------------------------------------------------------------------
 
 let selectedCategoryId = "all";
+let searchTerm = "";
+let customSites = loadCustomSites();
 
 // ---------------------------------------------------------------------------
 // 렌더링: 탭
@@ -118,14 +163,31 @@ function createTabButton(id, title, icon) {
 // 렌더링: 카드 그리드
 // ---------------------------------------------------------------------------
 
+function getSitesForCategory(cat) {
+  const custom = customSites.filter((site) => site.categoryId === cat.id);
+  return [...cat.sites, ...custom].map((site) => ({
+    ...site,
+    categoryTitle: cat.title,
+    isCustom: Boolean(site.id),
+  }));
+}
+
 function getVisibleSites() {
-  if (selectedCategoryId === "all") {
-    return CATEGORIES.flatMap((cat) =>
-      cat.sites.map((site) => ({ ...site, categoryTitle: cat.title }))
-    );
-  }
-  const cat = CATEGORIES.find((c) => c.id === selectedCategoryId);
-  return cat ? cat.sites.map((site) => ({ ...site, categoryTitle: cat.title })) : [];
+  const categories =
+    selectedCategoryId === "all"
+      ? CATEGORIES
+      : CATEGORIES.filter((c) => c.id === selectedCategoryId);
+
+  const sites = categories.flatMap(getSitesForCategory);
+
+  const term = searchTerm.trim().toLowerCase();
+  if (!term) return sites;
+
+  return sites.filter(
+    (site) =>
+      site.name.toLowerCase().includes(term) ||
+      (site.desc && site.desc.toLowerCase().includes(term))
+  );
 }
 
 function renderGrid() {
@@ -144,7 +206,9 @@ function renderGrid() {
   if (sites.length === 0) {
     const empty = document.createElement("div");
     empty.className = "empty-state";
-    empty.textContent = "표시할 사이트가 없습니다.";
+    empty.textContent = searchTerm.trim()
+      ? `"${searchTerm.trim()}"에 대한 검색 결과가 없습니다.`
+      : "표시할 사이트가 없습니다.";
     grid.appendChild(empty);
     return;
   }
@@ -161,9 +225,13 @@ function renderGrid() {
     }
 
     const badge = site.url === "#" ? '<span class="badge-pending">링크 준비중</span>' : "";
+    const deleteBtn = site.isCustom
+      ? '<button type="button" class="delete-btn" title="삭제" aria-label="사이트 삭제">×</button>'
+      : "";
 
     card.innerHTML = `
       ${badge}
+      ${deleteBtn}
       <div class="site-card-top">
         <span class="site-card-icon">${site.name.charAt(0)}</span>
         ${selectedCategoryId === "all" ? `<span class="site-card-category">${site.categoryTitle}</span>` : ""}
@@ -171,7 +239,87 @@ function renderGrid() {
       <span class="site-card-name">${site.name}</span>
       <span class="site-card-desc">${site.desc}</span>
     `;
+
+    if (site.isCustom) {
+      card.querySelector(".delete-btn").addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (confirm(`"${site.name}"을(를) 삭제할까요?`)) {
+          deleteCustomSite(site.id);
+        }
+      });
+    }
+
     grid.appendChild(card);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// 검색
+// ---------------------------------------------------------------------------
+
+function initSearch() {
+  const input = document.getElementById("search-input");
+  input.addEventListener("input", () => {
+    searchTerm = input.value;
+    renderGrid();
+  });
+}
+
+// ---------------------------------------------------------------------------
+// 사이트 추가 다이얼로그
+// ---------------------------------------------------------------------------
+
+function populateCategorySelect() {
+  const select = document.getElementById("site-category");
+  select.innerHTML = CATEGORIES.map(
+    (cat) => `<option value="${cat.id}">${cat.icon} ${cat.title}</option>`
+  ).join("");
+}
+
+function initAddDialog() {
+  const dialog = document.getElementById("add-site-dialog");
+  const form = document.getElementById("add-site-form");
+  const openBtn = document.getElementById("open-add-dialog");
+  const cancelBtn = document.getElementById("cancel-add-dialog");
+  const categorySelect = document.getElementById("site-category");
+  const nameInput = document.getElementById("site-name");
+  const descInput = document.getElementById("site-desc");
+  const urlInput = document.getElementById("site-url");
+
+  populateCategorySelect();
+
+  openBtn.addEventListener("click", () => {
+    form.reset();
+    if (selectedCategoryId !== "all") {
+      categorySelect.value = selectedCategoryId;
+    }
+    dialog.showModal();
+    nameInput.focus();
+  });
+
+  cancelBtn.addEventListener("click", () => dialog.close());
+
+  dialog.addEventListener("click", (e) => {
+    if (e.target === dialog) dialog.close();
+  });
+
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    if (!nameInput.value.trim() || !urlInput.value.trim()) return;
+
+    const categoryId = categorySelect.value;
+    addCustomSite({
+      categoryId,
+      name: nameInput.value,
+      desc: descInput.value,
+      url: urlInput.value,
+    });
+
+    selectedCategoryId = categoryId;
+    renderTabs();
+    renderGrid();
+    dialog.close();
   });
 }
 
@@ -217,6 +365,8 @@ function initBackToTop() {
 function init() {
   renderTabs();
   renderGrid();
+  initSearch();
+  initAddDialog();
   initTheme();
   initBackToTop();
 }

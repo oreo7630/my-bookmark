@@ -31,6 +31,17 @@
     </div>
   </section>
 
+  <!-- 검색 & 추가 툴바 -->
+  <section class="section toolbar-section" aria-label="검색 및 사이트 추가">
+    <div class="toolbar">
+      <div class="search-wrap">
+        <span class="search-icon" aria-hidden="true">🔍</span>
+        <input id="search-input" class="search-input" type="search" placeholder="사이트 이름, 설명으로 검색...">
+      </div>
+      <button id="open-add-dialog" class="btn-add" type="button">+ 사이트 추가</button>
+    </div>
+  </section>
+
   <!-- 사이트 카드 그리드 -->
   <section class="section grid-section" aria-labelledby="grid-heading">
     <div class="section-head">
@@ -41,6 +52,37 @@
   </section>
 
 </main>
+
+<dialog id="add-site-dialog" class="add-dialog">
+  <form id="add-site-form" class="add-form">
+    <h3>새 사이트 추가</h3>
+
+    <label class="field">
+      <span>카테고리</span>
+      <select id="site-category" required></select>
+    </label>
+
+    <label class="field">
+      <span>사이트 이름</span>
+      <input id="site-name" type="text" placeholder="예: Notion" required>
+    </label>
+
+    <label class="field">
+      <span>한 줄 설명</span>
+      <input id="site-desc" type="text" placeholder="예: 팀 협업 및 문서 관리 도구">
+    </label>
+
+    <label class="field">
+      <span>URL</span>
+      <input id="site-url" type="text" placeholder="예: https://notion.so" required>
+    </label>
+
+    <div class="dialog-actions">
+      <button type="button" id="cancel-add-dialog" class="btn-secondary">취소</button>
+      <button type="submit" class="btn-primary">추가</button>
+    </div>
+  </form>
+</dialog>
 
 <footer class="site-footer">
   <p>AI 프로젝트 마스터 · 수업용 북마크 대시보드</p>

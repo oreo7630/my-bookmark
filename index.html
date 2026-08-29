@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI 프로젝트 마스터 | 북마크 대시보드</title>
+<meta name="description" content="AI 프로젝트 마스터 수업용 북마크 대시보드">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="header-inner">
+    <div class="brand">
+      <span class="brand-mark">AI</span>
+      <div class="brand-text">
+        <strong>AI 프로젝트 마스터</strong>
+        <span>수업용 북마크 대시보드</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<main>
+
+  <!-- 카테고리 탭 -->
+  <section class="section tabs-section" aria-labelledby="tabs-heading">
+    <h2 id="tabs-heading" class="sr-only">카테고리</h2>
+    <div class="tabs-scroll">
+      <div id="tabs" class="tabs" role="tablist" aria-label="카테고리"></div>
+    </div>
+  </section>
+
+  <!-- 사이트 카드 그리드 -->
+  <section class="section grid-section" aria-labelledby="grid-heading">
+    <div class="section-head">
+      <h2 id="grid-heading"><span id="selected-tab-label">전체</span></h2>
+      <span id="count-text" class="count-text"></span>
+    </div>
+    <div id="card-grid" class="card-grid"></div>
+  </section>
+
+</main>
+
+<footer class="site-footer">
+  <p>AI 프로젝트 마스터 · 수업용 북마크 대시보드</p>
+  <button id="theme-toggle" class="theme-toggle" type="button" aria-label="다크모드 전환">
+    <span class="icon icon-sun">☀️ 라이트모드</span>
+    <span class="icon icon-moon">🌙 다크모드</span>
+  </button>
+</footer>
+
+<button id="back-to-top" class="back-to-top" type="button" aria-label="맨 위로 가기">↑</button>
+
+<script src="script.js"></script>
+</body>
+</html>

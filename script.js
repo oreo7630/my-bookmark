@@ -78,6 +78,118 @@ const CATEGORIES = [
 ];
 
 // ---------------------------------------------------------------------------
+// 카테고리 커스터마이징 (localStorage)
+// ---------------------------------------------------------------------------
+
+const CATEGORY_OVERRIDES_KEY = "bookmarkDashboard.categoryOverrides";
+const CUSTOM_CATEGORIES_KEY = "bookmarkDashboard.customCategories";
+
+function loadCategoryOverrides() {
+  try {
+    const raw = localStorage.getItem(CATEGORY_OVERRIDES_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function saveCategoryOverrides() {
+  localStorage.setItem(CATEGORY_OVERRIDES_KEY, JSON.stringify(categoryOverrides));
+}
+
+function loadCustomCategories() {
+  try {
+    const raw = localStorage.getItem(CUSTOM_CATEGORIES_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function saveCustomCategories() {
+  localStorage.setItem(CUSTOM_CATEGORIES_KEY, JSON.stringify(customCategories));
+}
+
+function isBuiltInCategory(id) {
+  return CATEGORIES.some((cat) => cat.id === id);
+}
+
+function getCategories() {
+  const builtIn = CATEGORIES.filter(
+    (cat) => !(categoryOverrides[cat.id] && categoryOverrides[cat.id].hidden)
+  ).map((cat) => {
+    const override = categoryOverrides[cat.id];
+    return override && override.title ? { ...cat, title: override.title } : cat;
+  });
+
+  const custom = customCategories.map((cat) => ({ ...cat, sites: [] }));
+
+  return [...builtIn, ...custom];
+}
+
+function addCategory(title) {
+  const trimmed = title.trim();
+  if (!trimmed) return;
+
+  customCategories.push({
+    id: `custom-cat-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    title: trimmed,
+  });
+  saveCustomCategories();
+  renderAll();
+}
+
+function renameCategory(id, newTitle) {
+  const trimmed = newTitle.trim();
+  if (!trimmed) return;
+
+  if (isBuiltInCategory(id)) {
+    categoryOverrides[id] = { ...(categoryOverrides[id] || {}), title: trimmed };
+    saveCategoryOverrides();
+  } else {
+    const cat = customCategories.find((c) => c.id === id);
+    if (cat) cat.title = trimmed;
+    saveCustomCategories();
+  }
+  renderAll();
+}
+
+function deleteCategory(id) {
+  if (isBuiltInCategory(id)) {
+    categoryOverrides[id] = { ...(categoryOverrides[id] || {}), hidden: true };
+    saveCategoryOverrides();
+  } else {
+    customCategories = customCategories.filter((c) => c.id !== id);
+    saveCustomCategories();
+  }
+
+  const removedCustomIds = customSites.filter((s) => s.categoryId === id).map((s) => s.id);
+  if (removedCustomIds.length) {
+    customSites = customSites.filter((s) => s.categoryId !== id);
+    saveCustomSites();
+  }
+
+  let favoritesChanged = false;
+  [...favoriteKeys].forEach((key) => {
+    if (key.startsWith(`${id}::`) || removedCustomIds.includes(key)) {
+      favoriteKeys.delete(key);
+      favoritesChanged = true;
+    }
+  });
+  if (favoritesChanged) saveFavorites();
+
+  const hadVisits = recentVisits.some((v) => v.categoryId === id);
+  if (hadVisits) {
+    recentVisits = recentVisits.filter((v) => v.categoryId !== id);
+    saveRecentVisits();
+  }
+
+  if (selectedCategoryId === id) selectedCategoryId = "all";
+
+  renderAll();
+}
+
+// ---------------------------------------------------------------------------
 // 사용자 추가 사이트 (localStorage)
 // ---------------------------------------------------------------------------
 
@@ -215,11 +327,13 @@ function formatRelativeTime(timestamp) {
 
 function exportBackup() {
   const data = {
-    version: 1,
+    version: 2,
     exportedAt: new Date().toISOString(),
     customSites,
     favorites: [...favoriteKeys],
     recentVisits,
+    categoryOverrides,
+    customCategories,
   };
 
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
@@ -247,7 +361,11 @@ function importBackupFile(file) {
     }
 
     const hasExisting =
-      customSites.length > 0 || favoriteKeys.size > 0 || recentVisits.length > 0;
+      customSites.length > 0 ||
+      favoriteKeys.size > 0 ||
+      recentVisits.length > 0 ||
+      customCategories.length > 0 ||
+      Object.keys(categoryOverrides).length > 0;
     if (hasExisting && !confirm("기존 데이터를 덮어씁니다. 계속하시겠습니까?")) {
       return;
     }
@@ -255,6 +373,8 @@ function importBackupFile(file) {
     localStorage.setItem(CUSTOM_SITES_KEY, JSON.stringify(data.customSites || []));
     localStorage.setItem(FAVORITES_KEY, JSON.stringify(data.favorites || []));
     localStorage.setItem(RECENT_VISITS_KEY, JSON.stringify(data.recentVisits || []));
+    localStorage.setItem(CATEGORY_OVERRIDES_KEY, JSON.stringify(data.categoryOverrides || {}));
+    localStorage.setItem(CUSTOM_CATEGORIES_KEY, JSON.stringify(data.customCategories || []));
     location.reload();
   };
   reader.readAsText(file);
@@ -285,6 +405,8 @@ let searchTerm = "";
 let customSites = loadCustomSites();
 let favoriteKeys = loadFavorites();
 let recentVisits = loadRecentVisits();
+let categoryOverrides = loadCategoryOverrides();
+let customCategories = loadCustomCategories();
 
 // ---------------------------------------------------------------------------
 // 렌더링: 카테고리 내비게이션
@@ -296,12 +418,19 @@ function renderCategoryNav() {
 
   nav.appendChild(createNavItem("all", "전체", getAllSites().length));
 
-  CATEGORIES.forEach((cat) => {
-    nav.appendChild(createNavItem(cat.id, cat.title, getSitesForCategory(cat).length));
+  getCategories().forEach((cat) => {
+    nav.appendChild(
+      createNavItem(cat.id, cat.title, getSitesForCategory(cat).length, { editable: true })
+    );
   });
+
+  nav.appendChild(createAddCategoryButton());
 }
 
-function createNavItem(id, title, count) {
+function createNavItem(id, title, count, { editable = false } = {}) {
+  const row = document.createElement("div");
+  row.className = "nav-item-row";
+
   const btn = document.createElement("button");
   btn.type = "button";
   btn.className = "nav-item" + (id === selectedCategoryId ? " active" : "");
@@ -312,6 +441,58 @@ function createNavItem(id, title, count) {
     selectedCategoryId = id;
     renderCategoryNav();
     renderGrid();
+  });
+  row.appendChild(btn);
+
+  if (editable) {
+    row.appendChild(createNavItemActions(id, title));
+  }
+
+  return row;
+}
+
+function createNavItemActions(id, title) {
+  const actions = document.createElement("div");
+  actions.className = "nav-item-actions";
+
+  const editBtn = document.createElement("button");
+  editBtn.type = "button";
+  editBtn.className = "nav-icon-btn";
+  editBtn.title = "카테고리 이름 변경";
+  editBtn.setAttribute("aria-label", "카테고리 이름 변경");
+  editBtn.textContent = "✎";
+  editBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const next = prompt("카테고리 이름 변경", title);
+    if (next !== null) renameCategory(id, next);
+  });
+
+  const deleteBtn = document.createElement("button");
+  deleteBtn.type = "button";
+  deleteBtn.className = "nav-icon-btn";
+  deleteBtn.title = "카테고리 삭제";
+  deleteBtn.setAttribute("aria-label", "카테고리 삭제");
+  deleteBtn.textContent = "×";
+  deleteBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    if (confirm(`"${title}" 카테고리를 삭제할까요? 포함된 사이트도 함께 삭제됩니다.`)) {
+      deleteCategory(id);
+    }
+  });
+
+  actions.appendChild(editBtn);
+  actions.appendChild(deleteBtn);
+  return actions;
+}
+
+function createAddCategoryButton() {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "nav-item nav-item-add";
+  btn.textContent = "+ 카테고리 추가";
+  btn.addEventListener("click", () => {
+    const title = prompt("새 카테고리 이름을 입력하세요");
+    if (title && title.trim()) addCategory(title);
   });
   return btn;
 }
@@ -332,14 +513,15 @@ function getSitesForCategory(cat) {
 }
 
 function getAllSites() {
-  return CATEGORIES.flatMap(getSitesForCategory);
+  return getCategories().flatMap(getSitesForCategory);
 }
 
 function getVisibleSites() {
+  const allCategories = getCategories();
   const categories =
     selectedCategoryId === "all"
-      ? CATEGORIES
-      : CATEGORIES.filter((c) => c.id === selectedCategoryId);
+      ? allCategories
+      : allCategories.filter((c) => c.id === selectedCategoryId);
 
   const sites = categories.flatMap(getSitesForCategory);
 
@@ -359,7 +541,7 @@ function renderGrid() {
   const countText = document.getElementById("count-text");
 
   const sites = getVisibleSites();
-  const cat = CATEGORIES.find((c) => c.id === selectedCategoryId);
+  const cat = getCategories().find((c) => c.id === selectedCategoryId);
 
   label.textContent = cat ? cat.title : "전체";
   countText.textContent = `${sites.length}개 사이트`;
@@ -528,9 +710,9 @@ function initSearch() {
 
 function populateCategorySelect() {
   const select = document.getElementById("site-category");
-  select.innerHTML = CATEGORIES.map(
-    (cat) => `<option value="${cat.id}">${cat.title}</option>`
-  ).join("");
+  select.innerHTML = getCategories()
+    .map((cat) => `<option value="${cat.id}">${cat.title}</option>`)
+    .join("");
 }
 
 function initAddDialog() {
@@ -547,6 +729,7 @@ function initAddDialog() {
 
   openBtn.addEventListener("click", () => {
     form.reset();
+    populateCategorySelect();
     if (selectedCategoryId !== "all") {
       categorySelect.value = selectedCategoryId;
     }
